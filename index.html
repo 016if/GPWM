@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>#GetPlasticWithMe Live Tracker</title>
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      background-color: #e8f5e9;
+      color: #2e7d32;
+      margin: 0;
+      padding: 0;
+    }
+    header {
+      background-color: #43a047;
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .progress-container {
+      background-color: #c8e6c9;
+      border: 2px solid #2e7d32;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 30px;
+      text-align: center;
+    }
+    .progress-bar {
+      height: 30px;
+      background-color: #81c784;
+      border-radius: 15px;
+      margin: 15px 0;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background-color: #2e7d32;
+      width: 0%;
+      transition: width 0.5s ease;
+    }
+    .submission-form {
+      background-color: #f1f8e9;
+      border: 1px solid #aed581;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 30px;
+      text-align: center;
+    }
+    .gallery {
+      margin-top: 30px;
+    }
+    .submission {
+      background-color: #f1f8e9;
+      border: 1px solid #aed581;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+    .submission img {
+      max-width: 100%;
+      border-radius: 8px;
+      margin-top: 10px;
+      max-height: 300px;
+      object-fit: contain;
+      border: 1px solid #ddd;
+    }
+    button {
+      background-color: #388e3c;
+      color: white;
+      border: none;
+      padding: 12px 25px;
+      border-radius: 30px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+      margin: 5px;
+    }
+    button:hover {
+      background-color: #2e7d32;
+    }
+    .loading {
+      text-align: center;
+      padding: 20px;
+      font-style: italic;
+    }
+    .error {
+      color: #c62828;
+      text-align: center;
+      padding: 20px;
+    }
+    .total-kg {
+      font-size: 24px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>#GetPlasticWithMe</h1>
+    <p>Help us collect 10,000 kg of plastic waste by October!</p>
+  </header>
+
+  <div class="container">
+    <div class="progress-container">
+      <h2>🌍 Total Plastic Collected</h2>
+      <p><span class="total-kg" id="total-kg">0.00 kg</span> / 10,000 kg</p>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+      <p id="progress-percent">0.0% of goal reached</p>
+    </div>
+
+    <div class="submission-form">
+      <h2>♻️ Submit Your Contribution</h2>
+      <p>Share your cleanup to inspire others!</p>
+      <a href="https://forms.gle/abNgMb514hT6HE7TA" target="_blank">
+        <button>Submit Now</button>
+      </a>
+      <button id="refresh-btn">🔄 Refresh Data</button>
+    </div>
+
+    <div class="gallery">
+      <h2>🌟 Recent Contributions</h2>
+      <div id="submissions-list" class="loading">Loading submissions...</div>
+    </div>
+  </div>
+
+  <script>
+    // Google Sheets CSV URL with cache-busting
+    const getCsvUrl = () => `https://docs.google.com/spreadsheets/d/e/2PACX-1vRcmeu69lPmgM_gJzYzO1kemkgSsWjQP-cXl0PHGKr-gShiMVAsfVTZzi_DBYhQJMrAwBd6D6xGmDGB/pub?output=csv&rand=${Date.now()}`;
+
+    // Parse CSV text into array of objects
+    function parseCSV(csvText) {
+      const lines = csvText.split('\n').filter(line => line.trim() !== '');
+      if (lines.length < 1) return [];
+      
+      // Clean headers by removing special characters and trimming
+      const headers = lines[0].split(',').map(h => 
+        h.replace(/[\n\r"]+/g, '').trim()
+      );
+      
+      return lines.slice(1).map(line => {
+        // Handle quoted fields and special characters
+        const values = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
+          .map(v => v.replace(/^"|"$/g, '').trim());
+        
+        return headers.reduce((obj, header, index) => {
+          obj[header] = values[index] || '';
+          return obj;
+        }, {});
+      });
+    }
+
+    // Convert Google Drive link to direct image URL
+    function getDirectImageUrl(url) {
+      if (!url) return '';
+      // Extract file ID from various Google Drive URL formats
+      const match = url.match(/id=([a-zA-Z0-9_-]+)/) || 
+                   url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || 
+                   url.match(/\/open\?id=([a-zA-Z0-9_-]+)/);
+      return match ? `https://drive.google.com/uc?export=view&id=${match[1]}` : '';
+    }
+
+    // Format numbers with commas
+    function formatNumber(num) {
+      return parseFloat(num).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+
+    // Main function to load and display data
+    async function loadSubmissions() {
+      try {
+        document.getElementById('submissions-list').className = 'loading';
+        document.getElementById('submissions-list').innerHTML = 'Loading submissions...';
+        
+        const response = await fetch(getCsvUrl(), {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache'
+          }
+        });
+        
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        
+        const csvText = await response.text();
+        const submissions = parseCSV(csvText);
+        
+        if (submissions.length === 0) {
+          throw new Error('No submissions found in the data');
+        }
+        
+        let totalKg = 0;
+        let submissionsHTML = '';
+        
+        submissions.forEach(sub => {
+          const name = sub['Your Name'] || 'Anonymous';
+          const country = sub['Your Country'] || 'Unknown';
+          const amount = parseFloat(sub['Amount of plastic collected(kg)']) || 0;
+          const imageUrl = getDirectImageUrl(sub['Upload an Image*(Either you doing the challet)'] || '');
+          
+          totalKg += amount;
+          
+          submissionsHTML += `
+            <div class="submission">
+              <p><strong>${name}</strong> from ${country}</p>
+              <p>Collected: <strong>${formatNumber(amount)} kg</strong></p>
+              ${imageUrl ? `<img src="${imageUrl}" alt="Plastic collected by ${name}" loading="lazy">` : ''}
+            </div>
+          `;
+        });
+        
+        const percent = Math.min((totalKg / 10000) * 100, 100).toFixed(1);
+        document.getElementById('total-kg').textContent = `${formatNumber(totalKg)} kg`;
+        document.getElementById('progress-fill').style.width = `${percent}%`;
+        document.getElementById('progress-percent').textContent = `${percent}% of goal reached`;
+        document.getElementById('submissions-list').className = '';
+        document.getElementById('submissions-list').innerHTML = submissionsHTML || 
+          '<div class="submission"><p>No submissions yet. Be the first!</p></div>';
+          
+      } catch (error) {
+        console.error('Error:', error);
+        document.getElementById('submissions-list').className = 'error';
+        document.getElementById('submissions-list').innerHTML = 
+          'Failed to load submissions. Please try refreshing the page.';
+      }
+    }
+
+    // Initial load
+    loadSubmissions();
+    
+    // Refresh button
+    document.getElementById('refresh-btn').addEventListener('click', loadSubmissions);
+    
+    // Auto-refresh every 10 seconds
+    setInterval(loadSubmissions, 10000);
+  </script>
+</body>
+</html>
